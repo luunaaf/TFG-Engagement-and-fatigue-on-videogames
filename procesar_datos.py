@@ -3,8 +3,8 @@ import glob
 import os
 
 dfs_m = []
-
 ruta_metricas = os.path.join("datos", "metricas")
+
 for juego in os.listdir(ruta_metricas):
     ruta_juego = os.path.join(ruta_metricas, juego)
     if not os.path.isdir(ruta_juego):
@@ -32,25 +32,17 @@ df_feat.columns = ["pupil_mean", "pupil_std", "movimiento_mean", "gaze_x_var", "
 df_feat = df_feat.reset_index()
 
 dfs_q = []
-
 ruta_cuestionarios = os.path.join("datos", "cuestionarios")
 archivos = glob.glob(os.path.join(ruta_cuestionarios, "*.csv")) + glob.glob(os.path.join(ruta_cuestionarios, "*.xlsx"))
 
 for archivo in archivos:
     juego = os.path.basename(archivo).split(" - ")[0]
-    if archivo.endswith(".csv"):
-        df = pd.read_csv(archivo)
-    else:
-        df = pd.read_excel(archivo)
+    df = pd.read_csv(archivo) if archivo.endswith(".csv") else pd.read_excel(archivo)
     df["juego"] = juego
     dfs_q.append(df)
 
-if not dfs_q:
-    raise RuntimeError("No se encontraron cuestionarios")
-
 df_q = pd.concat(dfs_q, ignore_index=True)
 df_q.columns = df_q.columns.str.strip()
-df_q = df_q.loc[:, ~df_q.columns.str.endswith("2")]
 
 df_q = df_q.rename(columns={
     "Indique su Código de Participación": "participant",
@@ -62,19 +54,9 @@ positivas = ["Alegría", "Felicidad/placer", "Entusiasmo/Excitación", "Satisfac
 negativas = ["Asco", "Ira/enfado", "Ansiedad", "Miedo", "Frustración", "Tristeza/depresión", "Fatiga/cansancio", "Aburrimiento"]
 
 def map_valor(x):
-    if pd.isna(x):
-        return pd.NA
-    x = str(x).strip().lower()
-    mapa = {
-        "nada": 1,
-        "casi nada": 2,
-        "poco": 3,
-        "ni mucho ni poco": 4,
-        "bastante": 5,
-        "mucho": 6,
-        "muchísimo": 7
-    }
-    return mapa.get(x, pd.NA)
+    if pd.isna(x): return pd.NA
+    mapa = {"nada": 1, "casi nada": 2, "poco": 3, "ni mucho ni poco": 4, "bastante": 5, "mucho": 6, "muchísimo": 7}
+    return mapa.get(str(x).strip().lower(), pd.NA)
 
 for col in positivas + negativas:
     if col in df_q.columns:
@@ -90,25 +72,11 @@ df_q["afecto_negativo"] = df_q[[c for c in negativas if c in df_q.columns]].mean
 for df in [df_feat, df_q]:
     df["participant"] = df["participant"].astype(str).str.strip().str.lower()
 
-mapa_juegos = {
-    "sonic": "sonic racing"
-}
-
+mapa_juegos = {"sonic": "sonic racing"}
 df_feat["juego_normalizado"] = df_feat["juego"].str.strip().str.lower().map(mapa_juegos).fillna(df_feat["juego"].str.strip().str.lower())
 df_q["juego_normalizado"] = df_q["juego"].str.strip().str.lower()
 
-df_final = pd.merge(
-    df_feat,
-    df_q,
-    left_on=["participant", "juego_normalizado"],
-    right_on=["participant", "juego_normalizado"],
-    how="left"
-)
-
-for col in ["afecto_positivo", "afecto_negativo", "nasa_mental", "nasa_frustracion"]:
-    if col not in df_final.columns:
-        df_final[col] = pd.NA
-
+df_final = pd.merge(df_feat, df_q, on=["participant", "juego_normalizado"], how="left")
 df_final["balance_emocional"] = df_final["afecto_positivo"] - df_final["afecto_negativo"]
 
 df_final.to_csv("datos_finales.csv", index=False)
