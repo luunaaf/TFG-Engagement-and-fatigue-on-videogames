@@ -1,0 +1,198 @@
+```html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Tobii Debug Mode</title>
+  <style>
+    body {
+      font-family: monospace;
+      background: #000;
+      color: #0f0;
+      padding: 20px;
+    }
+    .box {
+      margin: 10px 0;
+      font-size: 18px;
+    }
+    #log {
+      margin-top: 20px;
+      padding: 10px;
+      background: #111;
+      height: 300px;
+      overflow-y: scroll;
+      border: 1px solid #0f0;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<h1>🧪 Tobii Debug Console</h1>
+
+<div class="box">Estado: <span id="status">Iniciando...</span></div>
+<div class="box">Gaze X: <span id="gazeX">-</span></div>
+<div class="box">Gaze Y: <span id="gazeY">-</span></div>
+
+<div id="log"></div>
+
+<script>
+const IP = "192.168.x.x"; // ⚠️ CAMBIA ESTO
+
+let uuid = null;
+let peer = null;
+
+const statusEl = document.getElementById("status");
+const gazeXEl = document.getElementById("gazeX");
+const gazeYEl = document.getElementById("gazeY");
+const logEl = document.getElementById("log");
+
+// 🔥 logger brutal
+function log(msg, data = null) {
+  const time = new Date().toLocaleTimeString();
+  const full = `[${time}] ${msg}`;
+  
+  console.log(full, data || "");
+  
+  const line = document.createElement("div");
+  line.textContent = full + (data ? " " + JSON.stringify(data) : "");
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function start() {
+  try {
+    log("🚀 Iniciando sistema...");
+    statusEl.textContent = "Creando RTCPeerConnection";
+
+    peer = new RTCPeerConnection();
+
+    log("✅ RTCPeerConnection creado");
+
+    // 🔄 Estados WebRTC
+    peer.onconnectionstatechange = () => {
+      log("🔌 connectionState:", peer.connectionState);
+    };
+
+    peer.oniceconnectionstatechange = () => {
+      log("❄️ iceConnectionState:", peer.iceConnectionState);
+    };
+
+    peer.onicegatheringstatechange = () => {
+      log("🧊 iceGatheringState:", peer.iceGatheringState);
+    };
+
+    peer.onsignalingstatechange = () => {
+      log("📡 signalingState:", peer.signalingState);
+    };
+
+    // 📡 DataChannel
+    peer.ondatachannel = (event) => {
+      const channel = event.channel;
+      log("📥 DataChannel recibido:", channel.label);
+
+      channel.onopen = () => {
+        log("🟢 DataChannel abierto");
+        statusEl.textContent = "DataChannel activo";
+      };
+
+      channel.onclose = () => {
+        log("🔴 DataChannel cerrado");
+      };
+
+      channel.onerror = (err) => {
+        log("❌ DataChannel error:", err);
+      };
+
+      channel.onmessage = (msg) => {
+        log("📦 Mensaje RAW recibido");
+
+        try {
+          const data = JSON.parse(msg.data);
+          log("📊 JSON parseado", data);
+
+          if (data.gaze2d) {
+            gazeXEl.textContent = data.gaze2d.x.toFixed(3);
+            gazeYEl.textContent = data.gaze2d.y.toFixed(3);
+          }
+
+        } catch (e) {
+          log("⚠️ No es JSON:", msg.data);
+        }
+      };
+    };
+
+    // ❄️ ICE local
+    peer.onicecandidate = async (event) => {
+      if (event.candidate) {
+        log("📤 ICE local generado", event.candidate);
+
+        if (uuid) {
+          try {
+            await fetch(`http://${IP}/rest/webrtc/${uuid}!add-ice-candidate`, {
+              method: "POST",
+              body: JSON.stringify(event.candidate)
+            });
+            log("✅ ICE enviado al Tobii");
+          } catch (err) {
+            log("❌ Error enviando ICE", err);
+          }
+        }
+      } else {
+        log("ℹ️ ICE gathering completado");
+      }
+    };
+
+    // 1️⃣ Crear sesión
+    log("📡 Creando sesión WebRTC...");
+    const res = await fetch(`http://${IP}/rest/webrtc!create`, { method: "POST" });
+    const data = await res.json();
+    uuid = data.uuid;
+    log("✅ UUID recibido:", uuid);
+
+    // 2️⃣ Obtener offer
+    log("📡 Solicitando SDP offer...");
+    const offerRes = await fetch(`http://${IP}/rest/webrtc/${uuid}!setup`, { method: "POST" });
+    const offerData = await offerRes.json();
+    log("📥 Offer recibido");
+
+    await peer.setRemoteDescription({
+      type: "offer",
+      sdp: offerData.sdp
+    });
+    log("✅ RemoteDescription seteada");
+
+    // 3️⃣ Crear answer
+    const answer = await peer.createAnswer();
+    log("📤 Answer creado");
+
+    await peer.setLocalDescription(answer);
+    log("✅ LocalDescription seteada");
+
+    // 4️⃣ Enviar answer
+    await fetch(`http://${IP}/rest/webrtc/${uuid}!start`, {
+      method: "POST",
+      body: JSON.stringify({ sdp: answer.sdp })
+    });
+    log("📡 Answer enviado al Tobii");
+
+    statusEl.textContent = "Esperando conexión...";
+
+    // ❤️ Keep alive
+    setInterval(() => {
+      fetch(`http://${IP}/rest/webrtc/${uuid}!keep-alive`, { method: "POST" });
+      log("❤️ keep-alive enviado");
+    }, 3000);
+
+  } catch (err) {
+    log("💥 ERROR CRÍTICO", err);
+    statusEl.textContent = "Error: " + err.message;
+  }
+}
+
+start();
+</script>
+
+</body>
+</html>
+```
