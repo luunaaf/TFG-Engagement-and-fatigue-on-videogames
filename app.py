@@ -1,153 +1,210 @@
 import streamlit as st
 import pandas as pd
-import json
-import websocket
-import threading
-from queue import Queue, Empty
-import time
-import logging
-import sys
+import plotly.express as px
+import plotly.graph_objects as go
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(
+    layout="wide", 
+    page_title="Consola de Análisis Biométrico",
 )
-logger = logging.getLogger(__name__)
 
-if "data_queue" not in st.session_state:
-    st.session_state.data_queue = Queue()
-    st.session_state.live_data = pd.DataFrame(columns=["timestamp", "pupil_mean", "gaze_x", "gaze_y"])
-    st.session_state.streaming = False
-    logger.info("Estado de sesión inicializado")
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;700&family=Montserrat:wght@800&display=swap');
 
-def socket_worker(url, data_queue):
-    logger.info(f"Intentando conectar al WebSocket: {url}")
+    /* Fuente principal para el cuerpo */
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+        color: #1e293b;
+    }
+
+    /* Fuente para datos y números (JETBRAINS MONO) */
+    [data-testid="stMetricValue"], .stDataFrame, code, .tick text {
+        font-family: 'JetBrains Mono', monospace !important;
+        letter-spacing: -0.8px;
+    }
+
+    /* Fuente para TITULOS (MONTSERRAT) */
+    h1, h2, h3 {
+        font-family: 'Montserrat', sans-serif !important;
+        font-weight: 800 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #0f172a;
+        border-left: 10px solid #1e293b;
+        padding-left: 15px;
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+    }
+
+    .main { background-color: #ffffff; }
+
+    /* Tarjetas de métricas */
+    .stMetric {
+        background-color: #f8fafc;
+        padding: 20px;
+        border: 1px solid #e2e8f0;
+        border-radius: 0px;
+    }
+
+    [data-testid="stMetricLabel"] {
+        text-transform: uppercase;
+        font-weight: 700;
+        font-size: 0.7rem;
+        color: #64748b;
+    }
+
+    /* Barra lateral */
+    [data-testid="stSidebar"] {
+        background-color: #f1f5f9;
+        border-right: 2px solid #1e293b;
+    }
+    
+    /* Selectores */
+    .stSelectbox label, .stMultiSelect label {
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 0.75rem;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+def cargar_datos():
     try:
-        ws = websocket.create_connection(url, timeout=7)
-        logger.info("Conexión WebSocket establecida con éxito")
-        
-        while st.session_state.streaming:
-            try:
-                message = ws.recv()
-                if not message:
-                    logger.warning("Mensaje vacío recibido")
-                    continue
-                
-                data = json.loads(message)
-                
-                if "gaze2d" in data:
-                    p_left = data.get("left_eye", {}).get("pupil", {}).get("diameter")
-                    p_right = data.get("right_eye", {}).get("pupil", {}).get("diameter")
-                    
-                    pupils = [p for p in [p_left, p_right] if p is not None and p > 0]
-                    p_mean = sum(pupils) / len(pupils) if pupils else 0
-                    
-                    payload = {
-                        "timestamp": data.get("timestamp", time.time()),
-                        "pupil_mean": p_mean,
-                        "gaze_x": data["gaze2d"][0],
-                        "gaze_y": data["gaze2d"][1]
-                    }
-                    data_queue.put(payload)
-                else:
-                    logger.debug(f"JSON recibido sin datos de gaze: {list(data.keys())}")
-            
-            except json.JSONDecodeError as je:
-                logger.error(f"Error al decodificar JSON: {je}")
-            except websocket.WebSocketConnectionClosedException:
-                logger.error("La conexión WebSocket se cerró inesperadamente")
-                break
-            except Exception as e:
-                logger.error(f"Error durante la recepción de datos: {type(e).__name__} - {e}")
-                break
-        
-        ws.close()
-        logger.info("Socket cerrado correctamente")
-    except Exception as e:
-        logger.critical(f"Fallo crítico al intentar conectar: {e}")
-        st.session_state.streaming = False
-
-def vista_tiempo_real():
-    st.header("Conexión en Vivo - Tobii SDK")
-    ip_gafas = st.text_input("IP de las Tobii Glasses 3", "192.168.71.50")
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("Conectar y Stream"):
-            if not st.session_state.streaming:
-                logger.info(f"Iniciando hilo de streaming para IP: {ip_gafas}")
-                st.session_state.streaming = True
-                url = f"ws://{ip_gafas}/live/data"
-                t = threading.Thread(
-                    target=socket_worker, 
-                    args=(url, st.session_state.data_queue), 
-                    daemon=True
-                )
-                t.start()
-            else:
-                logger.warning("El streaming ya estaba activo")
-    
-    with c2:
-        if st.button("Desconectar"):
-            logger.info("Deteniendo streaming por usuario")
-            st.session_state.streaming = False
-
-    monitor = st.empty()
-    
-    while st.session_state.streaming:
-        new_rows = []
-        count = 0
-        while not st.session_state.data_queue.empty():
-            try:
-                new_rows.append(st.session_state.data_queue.get_nowait())
-                count += 1
-            except Empty:
-                break
-        
-        if new_rows:
-            df_new = pd.DataFrame(new_rows)
-            st.session_state.live_data = pd.concat([st.session_state.live_data, df_new], ignore_index=True).tail(100)
-            logger.debug(f"Procesados {count} paquetes nuevos")
-        
-        with monitor.container():
-            if not st.session_state.live_data.empty:
-                ultimo = st.session_state.live_data.iloc[-1]
-                st.metric("Pupila (Media)", f"{ultimo['pupil_mean']:.2f} mm")
-                st.line_chart(st.session_state.live_data.set_index("timestamp")["pupil_mean"])
-                st.write(f"Gaze X: {ultimo['gaze_x']:.3f} | Gaze Y: {ultimo['gaze_y']:.3f}")
-            else:
-                st.info("Esperando datos del WebSocket...")
-        
-        time.sleep(0.05)
-
-def vista_historica():
-    st.header("Análisis de Datos Históricos")
-    try:
-        logger.info("Cargando datos_finales.csv")
-        df = pd.read_csv("datos_finales.csv")
-        juego = st.selectbox("Juego", df["juego_normalizado"].unique())
-        participante = st.selectbox("Participante", df[df["juego_normalizado"] == juego]["participant"].unique())
-        df_p = df[(df["juego_normalizado"] == juego) & (df["participant"] == participante)]
-        st.bar_chart(df_p[["pupil_mean", "movimiento_mean"]])
-    except FileNotFoundError:
-        logger.error("Archivo datos_finales.csv no encontrado")
-        st.error("No se encontró el archivo de datos procesados.")
-    except Exception as e:
-        logger.error(f"Error en vista histórica: {e}")
-        st.error(f"Error inesperado: {e}")
+        df = pd.read_csv("datos_finales_procesados.csv")
+        return df
+    except:
+        st.error("ERROR DE SISTEMA: No se encontró la fuente de datos.")
+        return None
 
 def main():
-    st.set_page_config(layout="wide", page_title="Tobii G3 Analyzer")
-    opcion = st.sidebar.radio("Navegación", ["Histórico", "Tiempo Real"])
-    logger.info(f"Navegando a: {opcion}")
-    
-    if opcion == "Histórico":
-        vista_historica()
-    else:
-        vista_tiempo_real()
+    # --- CABECERA ---
+    st.markdown("# ANÁLISIS DE FATIGA MENTAL BASADO EN NASA TLX Y MÉTRICAS OCULARES")
+    st.write("")
+
+    df = cargar_datos()
+    if df is not None:
+        # --- PANEL DE CONTROL ---
+        with st.sidebar:
+            st.markdown("### CONTROL DE SESIÓN")
+            juegos = sorted(df["juego_norm"].unique())
+            juego_sel = st.selectbox("SELECCIONAR JUEGO", juegos)
+
+            todos_parts = sorted(df[df["juego_norm"] == juego_sel]["participant"].unique())
+            part_sel = st.multiselect("COMPARATIVA DE SUJETOS", todos_parts, default=todos_parts[:1])
+            
+            if st.checkbox("SELECCIONAR TODOS LOS SUJETOS"):
+                part_sel = todos_parts
+
+            st.divider()
+            st.markdown(f"**SESIÓN:** {juego_sel.upper()}")
+            st.markdown(f"**MUESTRA:** {len(part_sel)} SUJETOS")
+
+        # Filtrado de datos
+        df_p = df[(df["juego_norm"] == juego_sel) & (df["participant"].isin(part_sel))]
+        
+        if df_p.empty:
+            st.warning("CONSULTA NULA: No se han encontrado registros.")
+            return
+
+        # --- SECCIÓN 1: INDICADORES CLAVE ---
+        m1, m2, m3, m4 = st.columns(4)
+        
+        val_carga = df_p["nasa_carga_total"].mean()
+        val_pupila = df_p["pupil_mean"].mean()
+        val_balance = df_p["balance_emocional"].mean()
+        val_movimiento = df_p["movimiento_mean"].mean()
+
+        m1.metric("ÍNDICE DE CARGA MENTAL", f"{val_carga:.2f}")
+        m2.metric("DIÁMETRO PUPILAR (MM)", f"{val_pupila:.2f}")
+        m3.metric("BALANCE EMOCIONAL", f"{val_balance:.2f}")
+        m4.metric("INTENSIDAD MOVIMIENTO", f"{val_movimiento:.2f}")
+
+        st.write("")
+
+        # --- SECCIÓN 2: PERFILES Y DISTRIBUCIÓN ---
+        col_left, col_right = st.columns([1, 1])
+
+        with col_left:
+            st.subheader("PERFIL DE CARGA SUBJETIVA")
+            dims = ["Mental", "Física", "Temporal", "Esfuerzo", "Frustración", "Rendimiento (invertido)"]
+            
+            fig_radar = go.Figure()
+
+            for p in part_sel:
+                d_part = df_p[df_p["participant"] == p]
+                if not d_part.empty:
+                    valores = [d_part["nasa_mental"].iloc[0], d_part["nasa_fisica"].iloc[0], 
+                               d_part["nasa_temporal"].iloc[0], d_part["nasa_esfuerzo"].iloc[0], 
+                               d_part["nasa_frustracion"].iloc[0], d_part["nasa_rendimiento_inv"].iloc[0]]
+                    
+                    fig_radar.add_trace(go.Scatterpolar(
+                        r=valores,
+                        theta=dims,
+                        fill='toself',
+                        name=f"SUJETO: {p}"
+                    ))
+
+            fig_radar.update_layout(
+                polar=dict(
+                    radialaxis=dict(visible=True, range=[0, 10], gridcolor="#cbd5e1", tickfont={"family": "JetBrains Mono"}),
+                    angularaxis=dict(gridcolor="#cbd5e1")
+                ),
+                font=dict(family="Inter", size=12),
+                showlegend=True,
+                legend=dict(orientation="h", y=-0.2),
+                margin=dict(l=40, r=40, t=40, b=40)
+            )
+            st.plotly_chart(fig_radar, use_container_width=True)
+
+        with col_right:
+            st.subheader("POLARIDAD DEL AFECTO")
+            
+            afectos = df_p.groupby("participant")[["afecto_positivo", "afecto_negativo"]].mean().reset_index()
+            df_emo = afectos.melt(id_vars="participant", var_name="Tipo", value_name="Puntaje")
+            
+            # Traducción de etiquetas en el gráfico
+            df_emo["Tipo"] = df_emo["Tipo"].replace({"afecto_positivo": "Afecto Positivo", "afecto_negativo": "Afecto Negativo"})
+
+            fig_bar = px.bar(df_emo, 
+                             x="participant", 
+                             y="Puntaje", 
+                             color="Tipo", 
+                             barmode="group",
+                             color_discrete_map={
+                                 "Afecto Positivo": "#059669", 
+                                 "Afecto Negativo": "#b91c1c"
+                             })
+            
+            fig_bar.update_layout(
+                font=dict(family="Inter"),
+                xaxis_title="IDENTIFICADOR SUJETO",
+                yaxis_title="PUNTUACIÓN",
+                plot_bgcolor="rgba(0,0,0,0)",
+                legend=dict(title="", orientation="h", y=-0.2),
+                yaxis=dict(gridcolor="#f1f5f9", tickfont=dict(family="JetBrains Mono"))
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        # --- SECCIÓN 3: CORRELACIONES ---
+        st.subheader("CORRELACIÓN BIOMÉTRICA GRUPAL")
+        fig_scatter = px.scatter(df_p, x="pupil_mean", y="movimiento_mean", 
+                                 color="participant",
+                                 size="nasa_carga_total",
+                                 labels={"pupil_mean": "MEDIA PUPILAR", "movimiento_mean": "INTENSIDAD MOV.", "participant": "SUJETO"},
+                                 template="plotly_white")
+        
+        fig_scatter.update_layout(
+            font=dict(family="Inter"),
+            xaxis=dict(tickfont=dict(family="JetBrains Mono")),
+            yaxis=dict(tickfont=dict(family="JetBrains Mono"))
+        )
+        st.plotly_chart(fig_scatter, use_container_width=True)
+
+        # --- INSPECTOR ---
+        with st.expander("INSPECTOR DE DATOS BRUTOS"):
+            st.dataframe(df_p.style.format(precision=3), use_container_width=True)
 
 if __name__ == "__main__":
     main()
