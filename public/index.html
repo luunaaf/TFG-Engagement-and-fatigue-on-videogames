@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <title>Tobii G3 - Advanced Fatigue Dashboard</title>
+
+    <script src="/socket.io/socket.io.js"></script>
+
+    <style>
+
+        :root {
+
+            --bg: #0f172a;
+            --panel: #1e293b;
+            --text: #f8fafc;
+
+            --accent: #38bdf8;
+
+            --danger: #ef4444;
+            --warn: #f59e0b;
+            --safe: #10b981;
+        }
+
+        body {
+
+            font-family: 'Segoe UI', system-ui, sans-serif;
+
+            background: var(--bg);
+
+            color: var(--text);
+
+            padding: 30px;
+
+            margin: 0;
+        }
+
+        .header {
+
+            text-align: center;
+
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+
+            margin: 0;
+
+            color: var(--accent);
+        }
+
+        .header p {
+
+            margin: 5px 0 0 0;
+
+            color: #94a3b8;
+
+            font-family: monospace;
+        }
+
+        .dashboard {
+
+            display: grid;
+
+            grid-template-columns: 350px 1fr;
+
+            gap: 20px;
+
+            max-width: 1200px;
+
+            margin: 0 auto;
+        }
+
+        .panel {
+
+            background: var(--panel);
+
+            padding: 25px;
+
+            border-radius: 12px;
+
+            border: 1px solid #334155;
+        }
+
+        .panel h2 {
+
+            margin-top: 0;
+
+            font-size: 1.1em;
+
+            color: #cbd5e1;
+
+            text-transform: uppercase;
+
+            border-bottom: 1px solid #334155;
+
+            padding-bottom: 10px;
+        }
+
+        /* ================================================== */
+        /* FI PRINCIPAL */
+        /* ================================================== */
+
+        .fi-container {
+
+            text-align: center;
+
+            padding: 20px 0;
+        }
+
+        .fi-value {
+
+            font-size: 5em;
+
+            font-weight: 900;
+
+            margin: 0;
+
+            transition: color 0.3s;
+
+            color: var(--safe);
+        }
+
+        .telemetry {
+
+            background: rgba(0,0,0,0.2);
+
+            padding: 15px;
+
+            border-radius: 8px;
+
+            margin-top: 20px;
+
+            font-family: monospace;
+        }
+
+        /* ================================================== */
+        /* MÉTRICAS */
+        /* ================================================== */
+
+        .metrics-grid {
+
+            display: grid;
+
+            grid-template-columns: 1fr 1fr;
+
+            gap: 20px;
+        }
+
+        .metric-card {
+
+            background: rgba(0,0,0,0.2);
+
+            padding: 15px;
+
+            border-radius: 8px;
+        }
+
+        .metric-header {
+
+            display: flex;
+
+            justify-content: space-between;
+
+            margin-bottom: 8px;
+        }
+
+        .metric-title {
+
+            font-weight: bold;
+
+            color: var(--accent);
+        }
+
+        .metric-raw {
+
+            font-family: monospace;
+        }
+
+        /* ================================================== */
+        /* BARRAS */
+        /* ================================================== */
+
+        .bar-bg {
+
+            width: 100%;
+
+            height: 8px;
+
+            background: #334155;
+
+            border-radius: 4px;
+
+            overflow: hidden;
+
+            margin-top: 5px;
+        }
+
+        .bar-fill {
+
+            height: 100%;
+
+            width: 0%;
+
+            background: var(--safe);
+
+            transition:
+                width 0.5s ease-out,
+                background 0.5s;
+        }
+
+        /* ================================================== */
+        /* FÓRMULA */
+        /* ================================================== */
+
+        .formula {
+
+            grid-column: 1 / -1;
+
+            background: var(--panel);
+
+            padding: 20px;
+
+            border-radius: 12px;
+
+            margin-top: 20px;
+
+            text-align: center;
+
+            color: #94a3b8;
+
+            border: 1px dashed #475569;
+        }
+
+        .formula code {
+
+            color: var(--accent);
+
+            font-size: 1.1em;
+        }
+
+        /* ================================================== */
+        /* ALERTAS AVANZADAS */
+        /* ================================================== */
+
+        .fatigue-alert {
+
+            position: fixed;
+
+            top: 20px;
+
+            right: 20px;
+
+            width: 400px;
+
+            padding: 22px;
+
+            border-radius: 16px;
+
+            color: white;
+
+            z-index: 9999;
+
+            opacity: 0;
+
+            transform: translateY(-20px);
+
+            pointer-events: none;
+
+            transition: all 0.35s ease;
+
+            box-shadow: 0 0 30px rgba(0,0,0,0.45);
+
+            border: 1px solid rgba(255,255,255,0.08);
+
+            backdrop-filter: blur(8px);
+        }
+
+        .fatigue-alert.show {
+
+            opacity: 1;
+
+            transform: translateY(0);
+        }
+
+        .alert-title {
+
+            font-size: 22px;
+
+            font-weight: 900;
+
+            margin-bottom: 10px;
+
+            letter-spacing: 0.5px;
+        }
+
+        .alert-message {
+
+            font-size: 16px;
+
+            margin-bottom: 15px;
+
+            line-height: 1.5;
+        }
+
+        .alert-details {
+
+            background: rgba(0,0,0,0.22);
+
+            padding: 12px;
+
+            border-radius: 10px;
+
+            font-family: monospace;
+
+            font-size: 13px;
+
+            line-height: 1.6;
+        }
+
+        /* WARNING */
+
+        .fatigue-alert.moderada {
+
+            background: linear-gradient(
+                135deg,
+                #f59e0b,
+                #d97706
+            );
+        }
+
+        /* CRÍTICA */
+
+        .fatigue-alert.alta {
+
+            background: linear-gradient(
+                135deg,
+                #ef4444,
+                #991b1b
+            );
+
+            animation: pulseCritical 1s infinite;
+        }
+
+        @keyframes pulseCritical {
+
+            0% {
+                transform: scale(1);
+                box-shadow: 0 0 20px rgba(239,68,68,0.4);
+            }
+
+            50% {
+                transform: scale(1.03);
+                box-shadow: 0 0 45px rgba(239,68,68,0.9);
+            }
+
+            100% {
+                transform: scale(1);
+                box-shadow: 0 0 20px rgba(239,68,68,0.4);
+            }
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+<!-- ================================================== -->
+<!-- ALERTA FLOATING -->
+<!-- ================================================== -->
+
+<div id="fatigue-alert" class="fatigue-alert">
+
+    <div class="alert-title">
+
+        ALERTA
+
+    </div>
+
+    <div class="alert-message">
+
+        Detectando estado...
+
+    </div>
+
+    <div class="alert-details" id="alert-details">
+
+    </div>
+
+</div>
+
+<!-- ================================================== -->
+<!-- HEADER -->
+<!-- ================================================== -->
+
+<div class="header">
+
+    <h1>Dashboard de Carga Cognitiva</h1>
+
+    <p>
+
+        Algoritmo Multi-paramétrico
+        (Ventana 60s @ 50Hz)
+
+    </p>
+
+</div>
+
+<!-- ================================================== -->
+<!-- DASHBOARD -->
+<!-- ================================================== -->
+
+<div class="dashboard">
+
+    <!-- ================================================== -->
+    <!-- PANEL IZQUIERDO -->
+    <!-- ================================================== -->
+
+    <div class="panel">
+
+        <h2>Índice de Fatiga (FI)</h2>
+
+        <div class="fi-container">
+
+            <div id="fi-valor" class="fi-value">
+
+                ...
+
+            </div>
+
+            <p id="fi-status">
+
+                Calculando línea base...
+
+            </p>
+
+        </div>
+
+        <div class="telemetry">
+
+            <h3 style="margin:0 0 10px 0;font-size:0.9em;color:#94a3b8;">
+
+                Telemetría Raw (Live)
+
+            </h3>
+
+            <div>
+                Gaze X:
+                <span id="raw-x" style="color:var(--accent)">
+                    0.000
+                </span>
+            </div>
+
+            <div>
+                Gaze Y:
+                <span id="raw-y" style="color:var(--accent)">
+                    0.000
+                </span>
+            </div>
+
+            <div>
+                Pupila:
+                <span id="raw-p" style="color:var(--accent)">
+                    0.00 mm
+                </span>
+            </div>
+
+            <div id="raw-blink"
+                 style="color:#64748b;margin-top:5px;">
+
+                Ojos: Abiertos
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- ================================================== -->
+    <!-- PANEL MÉTRICAS -->
+    <!-- ================================================== -->
+
+    <div class="panel">
+
+        <h2>
+
+            Desglose de Métricas Fisiológicas
+
+        </h2>
+
+        <div class="metrics-grid"
+             id="metrics-container">
+
+        </div>
+
+    </div>
+
+    <!-- ================================================== -->
+    <!-- FÓRMULA -->
+    <!-- ================================================== -->
+
+    <div class="formula">
+
+        <strong>Fórmula Aplicada:</strong>
+
+        <code>
+
+            FI = 1/8 ×
+            (PDR + FD + BR + BD + PDV + GE + SV + PERCLOS)
+
+        </code>
+
+        <br>
+
+        <small>
+
+            Las barras muestran el valor normalizado
+            (0 = Óptimo, 1 = Fatiga Severa).
+
+        </small>
+
+    </div>
+
+</div>
+
+<script>
+
+    const socket = io();
+
+    // ==================================================
+    // NOMBRES COMPLETOS
+    // ==================================================
+
+    const metricNames = {
+
+        "PERCLOS": "Porcentaje Cierre Ocular",
+
+        "BR": "Tasa Parpadeos",
+
+        "BD": "Duración Parpadeo",
+
+        "PDR": "Reducción Pupilar",
+
+        "PDV": "Variabilidad Pupilar",
+
+        "SV": "Velocidad Sacádica",
+
+        "FD": "Duración Fijación",
+
+        "GE": "Entropía Mirada"
+    };
+
+    // ==================================================
+    // GENERAR TARJETAS
+    // ==================================================
+
+    const container =
+        document.getElementById("metrics-container");
+
+    Object.keys(metricNames).forEach(key => {
+
+        container.innerHTML += `
+
+            <div class="metric-card" id="card-${key}">
+
+                <div class="metric-header">
+
+                    <span class="metric-title">
+
+                        ${key}
+
+                    </span>
+
+                    <span class="metric-raw"
+                          id="val-${key}">
+
+                        0
+
+                    </span>
+
+                </div>
+
+                <div style="
+                    font-size:0.8em;
+                    color:#64748b;
+                    margin-bottom:5px;
+                ">
+
+                    ${metricNames[key]}
+
+                </div>
+
+                <div class="bar-bg">
+
+                    <div class="bar-fill"
+                         id="bar-${key}">
+
+                    </div>
+
+                </div>
+
+            </div>
+        `;
+    });
+
+    // ==================================================
+    // ALERTA VISUAL
+    // ==================================================
+
+    const alertBox =
+        document.getElementById("fatigue-alert");
+
+    const alertDetails =
+        document.getElementById("alert-details");
+
+    let lastAlertLevel = "";
+
+    // ==================================================
+    // GAZE LIVE
+    // ==================================================
+
+    socket.on("gaze", (data) => {
+
+        document.getElementById("raw-x").innerText =
+            data.x > 0
+            ? data.x.toFixed(3)
+            : "-";
+
+        document.getElementById("raw-y").innerText =
+            data.y > 0
+            ? data.y.toFixed(3)
+            : "-";
+
+        document.getElementById("raw-p").innerText =
+            data.pupil > 0
+            ? data.pupil.toFixed(2) + " mm"
+            : "-";
+
+        const blinkLabel =
+            document.getElementById("raw-blink");
+
+        if (data.blink) {
+
+            blinkLabel.innerText =
+                "⚠️ PARPADEO / PÉRDIDA TRACKING";
+
+            blinkLabel.style.color = "var(--warn)";
+        }
+
+        else {
+
+            blinkLabel.innerText =
+                "Ojos: Abiertos";
+
+            blinkLabel.style.color = "#64748b";
+        }
+    });
+
+    // ==================================================
+    // FATIGA
+    // ==================================================
+
+    socket.on("fatigue", (data) => {
+
+        const fi = data.fatigue_index;
+
+        const fiElem =
+            document.getElementById("fi-valor");
+
+        const fiStatus =
+            document.getElementById("fi-status");
+
+        // ==================================================
+        // FI PRINCIPAL
+        // ==================================================
+
+        fiElem.innerText =
+            (fi * 100).toFixed(1) + "%";
+
+        if (fi >= 0.50) {
+
+            fiElem.style.color =
+                "var(--danger)";
+
+            fiStatus.innerText =
+                "🚨 Fatiga Alta";
+        }
+
+        else if (fi >= 0.20) {
+
+            fiElem.style.color =
+                "var(--warn)";
+
+            fiStatus.innerText =
+                "⚠️ Fatiga Moderada";
+        }
+
+        else {
+
+            fiElem.style.color =
+                "var(--safe)";
+
+            fiStatus.innerText =
+                "✅ Estado Normal";
+        }
+
+        // ==================================================
+        // ALERTA AVANZADA
+        // ==================================================
+
+        if (data.alert && data.alert.active) {
+
+            const level = data.alert.level;
+
+            // Detectar métricas críticas
+            const criticalMetrics = [];
+
+            for (const [key, info]
+                 of Object.entries(data.metrics)) {
+
+                if (info.norm > 0.65) {
+
+                    criticalMetrics.push(
+                        `${key}: ${(info.norm * 100).toFixed(0)}%`
+                    );
+                }
+            }
+
+            if (lastAlertLevel !== level) {
+
+                alertBox.classList.remove(
+                    "moderada",
+                    "alta"
+                );
+
+                alertBox.classList.add("show");
+
+                // ==========================================
+                // WARNING
+                // ==========================================
+
+                if (level === "moderada") {
+
+                    alertBox.classList.add(
+                        "moderada"
+                    );
+
+                    alertBox.querySelector(
+                        ".alert-title"
+                    ).innerHTML =
+                        "ALERTA MODERADA";
+
+                    alertBox.querySelector(
+                        ".alert-message"
+                    ).innerHTML =
+                        `
+                        Se ha detectado un nivel de fatiga mental moderada.
+                        `;
+                }
+
+                // ==========================================
+                // CRÍTICA
+                // ==========================================
+
+                if (level === "alta") {
+
+                    alertBox.classList.add(
+                        "alta"
+                    );
+
+                    alertBox.querySelector(
+                        ".alert-title"
+                    ).innerHTML =
+                        "ALERTA CRÍTICA";
+
+                    alertBox.querySelector(
+                        ".alert-message"
+                    ).innerHTML =
+                        `
+                        Se ha detectado un nivel de fatiga mental elevada.
+                        `;
+                }
+
+                lastAlertLevel = level;
+
+                setTimeout(() => {
+
+                    alertBox.classList.remove(
+                        "show"
+                    );
+
+                }, 7000);
+            }
+        }
+
+        else {
+
+            lastAlertLevel = "";
+
+            alertBox.classList.remove(
+                "show"
+            );
+        }
+
+        // ==================================================
+        // MÉTRICAS
+        // ==================================================
+
+        const metrics = data.metrics;
+
+        for (const [key, info]
+             of Object.entries(metrics)) {
+
+            let val =
+                key === "PERCLOS"
+                ? (info.raw * 100).toFixed(1)
+                : info.raw.toFixed(2);
+
+            document.getElementById(
+                `val-${key}`
+            ).innerText =
+                val + info.unit;
+
+            const bar =
+                document.getElementById(
+                    `bar-${key}`
+                );
+
+            const normPercent =
+                info.norm * 100;
+
+            bar.style.width =
+                normPercent + "%";
+
+            if (info.norm > 0.7) {
+
+                bar.style.background =
+                    "var(--danger)";
+            }
+
+            else if (info.norm > 0.4) {
+
+                bar.style.background =
+                    "var(--warn)";
+            }
+
+            else {
+
+                bar.style.background =
+                    "var(--safe)";
+            }
+        }
+    });
+
+</script>
+
+</body>
+
+</html>
