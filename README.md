@@ -17,7 +17,7 @@ This repository contains two main modules: an **Historical Data Analysis** tool 
 Open your terminal in the project root folder and run:
 
 ```bash
-pip install numpy opencv-python pandas matplotlib jupyter
+pip install -r requirements.txt
 
 npm init -y
 npm install express socket.io
