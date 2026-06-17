@@ -30,7 +30,7 @@ npm install express socket.io
 
 ### Scenario 1: Real-Time Monitoring System (Live Demo)
 
-To launch the real-time pipeline, open **three separate terminal tabs** and execute these steps in the exact following order:
+To launch the real-time pipeline, open **two separate terminal tabs** and execute these steps in the exact following order:
 
 1. **Start the Middleware Server (Node.js)**
 ```bash
